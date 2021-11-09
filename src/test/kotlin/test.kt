@@ -1,3 +1,13 @@
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+
+private val json = Json {
+    prettyPrint = true
+}
+
 fun main() {
     val slashBuilder = DiscordSlashBuilder()
 
@@ -44,6 +54,7 @@ fun main() {
     slashBuilder.message {
         name = "cry about"
         description = "Cries about message"
-        defaultPermission = false
     }
+
+    println(slashBuilder.prettyJson())
 }
