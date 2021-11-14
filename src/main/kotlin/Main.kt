@@ -5,12 +5,22 @@ import kotlinx.serialization.descriptors.*
 import kotlinx.serialization.encoding.*
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.modules.SerializersModule
-import kotlinx.serialization.modules.polymorphic
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.decodeFromStream
+import kotlinx.serialization.json.jsonArray
+import java.net.HttpURLConnection
+import java.net.URI
+import java.net.URL
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.nio.charset.Charset
 
 class DiscordSlash(config: Configuration) {
     val builder = config.builder
     val path = config.path
+
+    private val instance = DiscordSlashBuilder().apply(builder)
 
     class Configuration {
         var path = "/"
@@ -31,6 +41,8 @@ class DiscordSlash(config: Configuration) {
             // Create the plugin, providing the mutable configuration so the plugin reads it keeping an immutable copy of the properties.
             val feature = DiscordSlash(configuration)
 
+            feature.instance.sync()
+
             // Intercept a pipeline.
             pipeline.intercept(ApplicationCallPipeline.Call) {
                 // Perform things in that interception point.
@@ -47,12 +59,34 @@ annotation class SlashMarker
 class DiscordSlashBuilder {
     var commands = mutableListOf<Command>()
     private val basePath = "https://discord.com/api/v9"
+    private val instance = HttpClient.newHttpClient()
 
     var public: String = ""
     var id: String = ""
+    var token: String = ""
 
+    @OptIn(ExperimentalSerializationApi::class)
     fun sync() {
-//        val path = "$basePath/applications/${id}/commands"
+        val url = URL("$basePath/applications/${id}/commands")
+
+        val je = url.openConnection().let {
+            it.setRequestProperty("Authorization", "Bot $token")
+            Json.decodeFromStream<JsonElement>(it.getInputStream())
+        }
+
+        if (je.jsonArray.size != commands.size) {
+            val req = HttpRequest.newBuilder(URI("$basePath/applications/${id}/commands")).apply {
+                header("Authorization", "Bot $token")
+                header("Content-Type", "application/json")
+                PUT(HttpRequest.BodyPublishers.ofString(json()))
+            }.build()
+
+            instance.send(req, HttpResponse.BodyHandlers.ofString()).let {
+                if (it.statusCode() != 200) {
+                    throw Error("Something went wrong with request expected status 200, got ${it.statusCode()} \nBody:\n${it.body()}")
+                }
+            }
+        }
     }
 
     fun json(): String {
@@ -75,12 +109,13 @@ class DiscordSlashBuilder {
 @Serializable
 sealed class Command {
     var name: String = ""
-    var description: String = ""
     var defaultPermission: Boolean = false
     var type: Int = 0
 
     @Serializable
     class SlashCommand : Command() {
+
+        var description: String = ""
 
         init {
             type = 1
@@ -103,7 +138,6 @@ sealed class Command {
 
         @Serializable
         sealed class Option {
-            @Serializable(with = TypeSerializer::class)
             var type: OptionType = OptionType.FILLER
             var name: String = ""
             var description: String = ""
@@ -155,7 +189,7 @@ sealed class Command {
                     type = OptionType.STRING
                 }
 
-                var choices = mutableMapOf<String, String>()
+                var choices = mutableListOf<Choice<String>>()
             }
 
             @Serializable
@@ -164,7 +198,7 @@ sealed class Command {
                     type = OptionType.INTEGER
                 }
 
-                var choices = mutableMapOf<String, Int>()
+                var choices = mutableListOf<Choice<Int>>()
 
                 var min: Int? = null
                 var max: Int? = null
@@ -177,7 +211,7 @@ sealed class Command {
                     type = OptionType.NUMBER
                 }
 
-                var choices = mutableMapOf<String, Double>()
+                var choices = mutableListOf<Choice<Double>>()
                 var min: Double? = null
                 var max: Double? = null
             }
@@ -241,6 +275,32 @@ sealed class Command {
     }
 }
 
+@Serializable(with = TypeSerializer::class)
+enum class OptionType {
+    FILLER,
+
+    SUB_COMMAND, SUB_COMMAND_GROUP,
+
+    STRING, INTEGER, BOOLEAN,
+
+    USER, CHANNEL, ROLE, MENTIONABLE,
+
+    NUMBER
+}
+
+@Serializable(with = ChannelTypeSerializer::class)
+enum class ChannelType {
+    GUILD_TEXT, DM,
+    GUILD_VOICE, GROUP_DM,
+    GUILD_CATEGORY,
+
+    GUILD_NEWS, GUILD_STORE,
+
+    GUILD_NEWS_THREAD, GUILD_PUBLIC_THREAD, GUILD_PRIVATE_THREAD,
+
+    GUILD_STAGE_VOICE,
+}
+
 object TypeSerializer : KSerializer<OptionType> {
     override fun deserialize(decoder: Decoder): OptionType {
         val data = decoder.decodeInt()
@@ -255,26 +315,18 @@ object TypeSerializer : KSerializer<OptionType> {
 
 }
 
-enum class OptionType {
-    FILLER,
+object ChannelTypeSerializer : KSerializer<ChannelType> {
+    override fun deserialize(decoder: Decoder): ChannelType {
+        val data = decoder.decodeInt()
+        return ChannelType.values().find { it.ordinal == data } ?: ChannelType.GUILD_TEXT
+    }
 
-    SUB_COMMAND, SUB_COMMAND_GROUP,
+    override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("type", PrimitiveKind.INT)
 
-    STRING, INTEGER, BOOLEAN,
-
-    USER, CHANNEL, ROLE, MENTIONABLE,
-
-    NUMBER
+    override fun serialize(encoder: Encoder, value: ChannelType) {
+        encoder.encodeInt(value.ordinal)
+    }
 }
 
-enum class ChannelType {
-    GUILD_TEXT, DM,
-    GUILD_VOICE, GROUP_DM,
-    GUILD_CATEGORY,
-
-    GUILD_NEWS, GUILD_STORE,
-
-    GUILD_NEWS_THREAD, GUILD_PUBLIC_THREAD, GUILD_PRIVATE_THREAD,
-
-    GUILD_STAGE_VOICE,
-}
+@Serializable
+data class Choice<T>(val name: String, val value: T)

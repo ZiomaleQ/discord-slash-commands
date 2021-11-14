@@ -1,17 +1,8 @@
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.encodeToJsonElement
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
+import java.io.File
+import java.util.*
 
-private val json = Json {
-    prettyPrint = true
-}
-
-fun main() {
-    val slashBuilder = DiscordSlashBuilder()
-
-    slashBuilder.chat {
+val slashData: DiscordSlashBuilder.() -> Unit = {
+    chat {
         name = "cry"
         description = "Cries"
 
@@ -21,14 +12,14 @@ fun main() {
             string {
                 name = "receiver"
                 description = "Who should be hugged?"
-                choices = mutableMapOf("Myself" to "me")
+                choices = mutableListOf(Choice("Myself", "me"))
                 required = true
             }
 
             int {
-                name = "Number"
+                name = "number"
                 description = "Number of hugs"
-                choices = mutableMapOf("One" to 1)
+                choices = mutableListOf(Choice("One", 1))
                 required = true
             }
         }
@@ -36,25 +27,39 @@ fun main() {
         string {
             name = "receiver"
             description = "Who should be hugged?"
-            choices = mutableMapOf("Myself" to "me")
+            choices = mutableListOf(Choice("Myself", "me"))
         }
 
         double {
             name = "price"
             description = "Hug price"
-            choices = mutableMapOf("None" to 0.0)
+            choices = mutableListOf(Choice("None", 0.0))
         }
     }
 
-    slashBuilder.user {
+    user {
         name = "cry with"
-        description = "Cries with user"
     }
 
-    slashBuilder.message {
+    message {
         name = "cry about"
-        description = "Cries about message"
     }
+}
 
+fun main() {
+    val config =
+        Properties().let { props -> File("./src/test/kotlin/config").inputStream().use { props.load(it) }; props }
+
+    val slashBuilder = DiscordSlashBuilder().apply(slashData)
     println(slashBuilder.prettyJson())
+
+    println("Building now, syncing!")
+
+    slashBuilder.id = config.getProperty("id")
+    slashBuilder.token = config.getProperty("token")
+    slashBuilder.public = config.getProperty("public")
+
+    slashBuilder.sync()
+
+    println("Syncing done")
 }
